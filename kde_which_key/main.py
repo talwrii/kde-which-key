@@ -166,8 +166,40 @@ def _block_global_shortcuts(block: bool):
         pass
 
 
+def remove_shortcut_from_config(sc: Shortcut, config_path: Optional[Path] = None):
+    """Reset a shortcut binding to 'none' in kglobalshortcutsrc."""
+    import shutil
+    path = config_path or DEFAULT_CONFIG_PATH
+    parser = configparser.RawConfigParser()
+    parser.optionxform = str
+    parser.read(str(path))
+
+    if not parser.has_section(sc.group) or not parser.has_option(sc.group, sc.key):
+        return
+
+    value = parser.get(sc.group, sc.key)
+    parts = value.split(",", 2)
+    if len(parts) == 3:
+        _active, default, description = parts
+    elif len(parts) == 2:
+        _active, default = parts
+        description = ""
+    else:
+        default = ""
+        description = ""
+
+    parser.set(sc.group, sc.key, f"none,{default},{description}")
+
+    if path.exists():
+        shutil.copy2(path, path.with_suffix(".bak"))
+
+    with open(path, "w") as f:
+        parser.write(f, space_around_delimiters=False)
+
+
 class WhichKeyApp:
     def __init__(self, config_path: Optional[Path] = None):
+        self.config_path = config_path
         self.shortcuts = load_shortcuts(config_path)
         self.filtered: list[Shortcut] = list(self.shortcuts)
         self.selected_index = 0
@@ -216,7 +248,7 @@ class WhichKeyApp:
 
         self.status_label = tk.Label(
             self.status_frame,
-            text="Press keys to filter  |  ? = search  |  Backspace = clear  |  Esc = quit",
+            text="Press keys to filter  |  ? = search  |  Del = remove  |  Esc = quit",
             font=self.font_status, fg="#a6adc8", bg="#313244", anchor="w",
         )
         self.status_label.pack(fill="both", expand=True, padx=10)
@@ -283,6 +315,7 @@ class WhichKeyApp:
         self.root.bind("<Up>", self._on_arrow_up)
         self.root.bind("<Down>", self._on_arrow_down)
         self.root.bind("<BackSpace>", self._on_backspace)
+        self.root.bind("<Delete>", self._on_delete)
         self.canvas.bind_all("<Button-4>",
                              lambda e: self.canvas.yview_scroll(-3, "units"))
         self.canvas.bind_all("<Button-5>",
@@ -351,6 +384,28 @@ class WhichKeyApp:
         if self.search_mode:
             return
         self._reset_filter()
+
+    def _on_delete(self, event):
+        if self.search_mode:
+            return
+        if self.filtered and 0 <= self.selected_index < len(self.filtered):
+            self._delete_item(self.selected_index)
+
+    def _delete_item(self, index):
+        sc = self.filtered[index]
+        remove_shortcut_from_config(sc, self.config_path)
+
+        # Remove from our lists
+        self.shortcuts = [s for s in self.shortcuts
+                          if not (s.group == sc.group and s.key == sc.key)]
+        self.filtered = [s for s in self.filtered
+                         if not (s.group == sc.group and s.key == sc.key)]
+
+        # Fix selection
+        if self.selected_index >= len(self.filtered):
+            self.selected_index = max(0, len(self.filtered) - 1)
+
+        self._update_list()
 
     def _on_enter(self, event):
         if self.filtered and 0 <= self.selected_index < len(self.filtered):
@@ -526,6 +581,14 @@ class WhichKeyApp:
                 anchor="e",
             )
             bind_label.pack(side="right")
+
+            del_btn = self._tk.Label(
+                row, text=" ✗ ",
+                font=self.font_main, fg="#f38ba8" if is_selected else "#585b70",
+                bg=bg, cursor="hand2",
+            )
+            del_btn.pack(side="right")
+            del_btn.bind("<Button-1>", lambda e, idx=i: self._delete_item(idx))
 
             for widget in [row, desc_label, bind_label]:
                 widget.bind("<Button-1>", lambda e, idx=i: self._click_item(idx))
