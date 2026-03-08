@@ -10,6 +10,7 @@ from typing import Optional
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "kglobalshortcutsrc"
 DESKTOP_DIR = Path.home() / ".local" / "share" / "applications"
+GEOMETRY_PATH = Path.home() / ".config" / "kde-which-key.geometry"
 
 TKINTER_TO_KDE = {
     "Control_L": "Ctrl", "Control_R": "Ctrl",
@@ -83,7 +84,7 @@ def load_shortcuts(config_path: Optional[Path] = None) -> list[Shortcut]:
 
 
 def resolve_command(sc: Shortcut) -> str:
-    """Return a human-readable description of the command that will run."""
+    """Return the raw executable command (or DBus info string) for the shortcut."""
     if sc.group.endswith(".desktop"):
         desktop_path = DESKTOP_DIR / sc.group
         if desktop_path.exists():
@@ -92,8 +93,7 @@ def resolve_command(sc: Shortcut) -> str:
                     cmd = line[5:].strip()
                     for code in ["%u", "%U", "%f", "%F", "%i", "%c", "%k"]:
                         cmd = cmd.replace(code, "")
-                    cmd = cmd.strip()
-                    return f"Exec: {cmd}"
+                    return cmd.strip()
         component = sc.group.removesuffix(".desktop")
         return (
             f"DBus: qdbus org.kde.kglobalaccel\n"
@@ -295,7 +295,6 @@ class Tooltip:
         self._show_after = None
         self._destroy_frame()
         cmd = resolve_command(sc)
-        # Place inside root window, positioned over the hovered widget
         wx = widget.winfo_rootx() - self._root.winfo_rootx()
         wy = widget.winfo_rooty() - self._root.winfo_rooty()
         rw = self._root.winfo_width()
@@ -310,7 +309,7 @@ class Tooltip:
         info_label = self._tk.Label(
             frame, text=info_text, justify="left",
             font=("monospace", 10), fg="#cdd6f4", bg="#313244",
-            padx=10, pady=8,  # fixed: tuples not allowed on Label
+            padx=10, pady=8,
         )
         info_label.pack(anchor="w")
         # Separator
@@ -358,9 +357,7 @@ class Tooltip:
             command=do_save,
         )
         save_btn.pack(side="right")
-        # Bind Enter in the entry to save too
         cmd_entry.bind("<Return>", lambda e: do_save())
-        # Measure after packing
         frame.update_idletasks()
         tw = frame.winfo_reqwidth()
         th = frame.winfo_reqheight()
@@ -389,12 +386,9 @@ class WhichKeyApp:
         self.shortcuts = load_shortcuts(config_path)
         self.filtered: list[Shortcut] = list(self.shortcuts)
         self.selected_index = 0
-        # Key filter state
         self.modifiers_held: set[str] = set()
         self.key_filter_key: str = ""
-        # Tri-state modifier filters: None=any, True=must have, False=must not have
         self.mod_filter: dict[str, Optional[bool]] = {m: None for m in MODIFIER_ORDER}
-        # Search mode
         self.search_mode = False
         self.search_query = ""
         self._build_ui()
@@ -407,11 +401,18 @@ class WhichKeyApp:
         self.root.title("kde-which-key")
         self.root.attributes("-topmost", True)
         width, height = 700, 540
-        self.root.geometry(f"{width}x{height}")
         self.root.update_idletasks()
-        x = (self.root.winfo_screenwidth() - width) // 2
-        y = (self.root.winfo_screenheight() - height) // 2
-        self.root.geometry(f"{width}x{height}+{x}+{y}")
+        if GEOMETRY_PATH.exists():
+            try:
+                self.root.geometry(GEOMETRY_PATH.read_text().strip())
+            except Exception:
+                x = (self.root.winfo_screenwidth() - width) // 2
+                y = (self.root.winfo_screenheight() - height) // 2
+                self.root.geometry(f"{width}x{height}+{x}+{y}")
+        else:
+            x = (self.root.winfo_screenwidth() - width) // 2
+            y = (self.root.winfo_screenheight() - height) // 2
+            self.root.geometry(f"{width}x{height}+{x}+{y}")
         self.root.configure(bg="#1e1e2e")
         self.font_main = tkfont.Font(family="monospace", size=11)
         self.font_binding = tkfont.Font(family="monospace", size=11, weight="bold")
@@ -422,7 +423,6 @@ class WhichKeyApp:
         self.status_frame = tk.Frame(self.root, bg="#313244", height=40)
         self.status_frame.pack(fill="x", padx=8, pady=(8, 4))
         self.status_frame.pack_propagate(False)
-        # Status bar — split into parts so "? = search" is clickable
         self.status_label_left = tk.Label(
             self.status_frame,
             text="Press keys to filter  |  ",
@@ -443,9 +443,8 @@ class WhichKeyApp:
             font=self.font_status, fg="#a6adc8", bg="#313244", anchor="w",
         )
         self.status_label_right.pack(side="left")
-        # Keep a reference to all status widgets for show/hide during search
         self._status_parts = [self.status_label_left, self.search_trigger_label, self.status_label_right]
-        self.status_label = self.status_label_left  # kept for compat
+        self.status_label = self.status_label_left
         self.search_entry = tk.Entry(
             self.status_frame, font=self.font_search,
             fg="#cdd6f4", bg="#45475a", insertbackground="#cdd6f4",
@@ -472,7 +471,6 @@ class WhichKeyApp:
             fg="#f5c2e7", bg="#1e1e2e",
         )
         self.key_label.pack(side="left", padx=(12, 0))
-        # Match count
         self.count_label = tk.Label(
             self.btn_frame, text="", font=self.font_status,
             fg="#a6adc8", bg="#1e1e2e",
@@ -490,9 +488,7 @@ class WhichKeyApp:
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
         self.canvas.pack(side="left", fill="both", expand=True)
         self.scrollbar.pack(side="right", fill="y")
-        # Tooltip
         self.tooltip = Tooltip(tk, self.root)
-        # Key bindings
         self.root.bind("<KeyPress>", self._on_key_press)
         self.root.bind("<KeyRelease>", self._on_key_release)
         self.root.bind("<Escape>", self._on_escape)
@@ -508,7 +504,6 @@ class WhichKeyApp:
         self._update_list()
 
     def _toggle_mod(self, mod: str):
-        """Cycle modifier filter: any → on → off → any."""
         self.mod_filter[mod] = TRISTATE_CYCLE[self.mod_filter[mod]]
         self._update_mod_buttons()
         self._apply_key_filter()
@@ -526,14 +521,12 @@ class WhichKeyApp:
             self._handle_search_key(event)
             return
         keysym = event.keysym
-        # ? enters search mode
         if keysym == "question" or (keysym == "slash" and event.state & 1):
             self._enter_search_mode()
             return
         if keysym in MODIFIER_KEYSYMS:
             kde_name = TKINTER_TO_KDE.get(keysym, keysym)
             self.modifiers_held.add(kde_name)
-            # Pressing a modifier sets it to "must have"
             self.mod_filter[kde_name] = True
             self._update_mod_buttons()
             self._apply_key_filter()
@@ -558,6 +551,7 @@ class WhichKeyApp:
         elif self._has_filter():
             self._reset_filter()
         else:
+            self._save_geometry()
             self.root.destroy()
 
     def _on_backspace(self, event):
@@ -574,12 +568,10 @@ class WhichKeyApp:
     def _delete_item(self, index):
         sc = self.filtered[index]
         remove_shortcut_from_config(sc, self.config_path)
-        # Remove from our lists
         self.shortcuts = [s for s in self.shortcuts
                           if not (s.group == sc.group and s.key == sc.key)]
         self.filtered = [s for s in self.filtered
                          if not (s.group == sc.group and s.key == sc.key)]
-        # Fix selection
         if self.selected_index >= len(self.filtered):
             self.selected_index = max(0, len(self.filtered) - 1)
         self._update_list()
@@ -587,6 +579,7 @@ class WhichKeyApp:
     def _on_enter(self, event):
         if self.filtered and 0 <= self.selected_index < len(self.filtered):
             sc = self.filtered[self.selected_index]
+            self._save_geometry()
             self.root.destroy()
             invoke_shortcut(sc)
 
@@ -648,7 +641,6 @@ class WhichKeyApp:
         )
 
     def _apply_key_filter(self):
-        """Filter shortcuts by modifier tri-state and key."""
         self.filtered = []
         for sc in self.shortcuts:
             for binding in sc.bindings:
@@ -675,7 +667,6 @@ class WhichKeyApp:
         self._update_list()
 
     def _apply_search_filter(self):
-        """Filter shortcuts by fuzzy search query."""
         query = self.search_entry.get().strip()
         if not query:
             self.filtered = list(self.shortcuts)
@@ -715,7 +706,6 @@ class WhichKeyApp:
         self.count_label.config(text=f"{len(self.filtered)} matches")
 
     def _update_list(self):
-        """Redraw the shortcut list."""
         self.tooltip.force_hide()
         for widget in self.inner_frame.winfo_children():
             widget.destroy()
@@ -753,7 +743,6 @@ class WhichKeyApp:
             )
             del_btn.pack(side="right")
             del_btn.bind("<Button-1>", lambda e, idx=i: self._delete_item(idx))
-            # Tooltip bindings on the binding label and row
             for widget in [row, desc_label, bind_label]:
                 widget.bind("<Button-1>", lambda e, idx=i: self._click_item(idx))
                 widget.bind("<Enter>", lambda e, s=sc: self.tooltip.show(e.widget, s))
@@ -763,11 +752,11 @@ class WhichKeyApp:
         self.selected_index = index
         self._update_list()
         sc = self.filtered[index]
+        self._save_geometry()
         self.root.destroy()
         invoke_shortcut(sc)
 
     def _ensure_visible(self):
-        """Scroll to keep selected item visible."""
         self.root.update_idletasks()
         children = self.inner_frame.winfo_children()
         if 0 <= self.selected_index < len(children):
@@ -784,12 +773,23 @@ class WhichKeyApp:
                 elif y + h > bottom:
                     self.canvas.yview_moveto((y + h - canvas_h) / total)
 
+    def _save_geometry(self):
+        try:
+            GEOMETRY_PATH.write_text(self.root.geometry())
+        except Exception:
+            pass
+
     def run(self):
         _block_global_shortcuts(True)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         try:
             self.root.mainloop()
         finally:
             _block_global_shortcuts(False)
+
+    def _on_close(self):
+        self._save_geometry()
+        self.root.destroy()
 
 
 def main():
